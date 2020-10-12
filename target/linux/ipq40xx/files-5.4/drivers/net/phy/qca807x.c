@@ -64,7 +64,15 @@
 #define QCA807X_MMD7_1000BASE_T_POWER_SAVE_PER_CABLE_LENGTH		0x801a
 #define QCA807X_CONTROL_DAC_MASK								GENMASK(2, 0)
 
-#define QCA807X_MMD7_LED_100N 					0x8074
+#define QCA807X_MMD7_LED_100N_1 				0x8074
+#define QCA807X_MMD7_LED_100N_2 				0x8075
+#define QCA807X_MMD7_LED_1000N_1 				0x8076
+#define QCA807X_MMD7_LED_1000N_2 				0x8077
+#define QCA807X_LED_TXACT_BLK_EN_2 				BIT(10)
+#define QCA807X_LED_RXACT_BLK_EN_2 				BIT(9)
+#define QCA807X_LED_GT_ON_EN_2 					BIT(6)
+#define QCA807X_LED_HT_ON_EN_2 					BIT(5)
+#define QCA807X_LED_BT_ON_EN_2 					BIT(4)
 #define QCA807X_GPIO_HIGH_VALUE 				0xa000
 #define QCA807X_GPIO_LOW_VALUE 					0x8000
 
@@ -314,7 +322,7 @@ static int qca807x_gpio_get_direction(struct gpio_chip *gc, unsigned int offset)
 
 static int qca807x_gpio_get_reg(unsigned int offset)
 {
-	return QCA807X_MMD7_LED_100N + offset % 4;
+	return QCA807X_MMD7_LED_100N_1 + offset % 4;
 }
 
 static int qca807x_gpio_get(struct gpio_chip *gc, unsigned int offset)
@@ -485,6 +493,42 @@ static int qca807x_ack_intr(struct phy_device *phydev)
 	return (ret < 0) ? ret : 0;
 }
 
+static int qca807x_led_config(struct phy_device *phydev)
+{
+	struct device_node *node = phydev->mdio.dev.of_node;
+	bool led_config = false;
+	int val;
+
+	val = phy_read_mmd(phydev, MDIO_MMD_AN, QCA807X_MMD7_LED_1000N_1);
+	if (val < 0)
+		return val;
+
+	if (of_property_read_bool(node, "qcom,single-led-1000")) {
+		val |= QCA807X_LED_TXACT_BLK_EN_2;
+		val |= QCA807X_LED_RXACT_BLK_EN_2;
+		val |= QCA807X_LED_GT_ON_EN_2;
+
+		led_config = true;
+	}
+
+	if (of_property_read_bool(node, "qcom,single-led-100")) {
+		val |= QCA807X_LED_HT_ON_EN_2;
+
+		led_config = true;
+	}
+
+	if (of_property_read_bool(node, "qcom,single-led-10")) {
+		val |= QCA807X_LED_BT_ON_EN_2;
+
+		led_config = true;
+	}
+
+	if(led_config)
+		return phy_write_mmd(phydev, MDIO_MMD_AN, QCA807X_MMD7_LED_1000N_1, val);
+	else
+		return 0;
+}
+
 static int qca807x_config(struct phy_device *phydev)
 {
 	struct device_node *node = phydev->mdio.dev.of_node;
@@ -510,6 +554,15 @@ static int qca807x_config(struct phy_device *phydev)
 		control_dac |= FIELD_PREP(QCA807X_CONTROL_DAC_MASK, of_control_dac);
 		ret = phy_write_mmd(phydev, MDIO_MMD_AN, QCA807X_MMD7_1000BASE_T_POWER_SAVE_PER_CABLE_LENGTH, control_dac);
 	}
+
+	/* Optionally configure LED-s */
+	#ifdef CONFIG_GPIOLIB
+	/* Check whether PHY-s pins are used as GPIO-s */
+	if (!of_property_read_bool(node, "gpio-controller"))
+		ret = qca807x_led_config(phydev);
+	#else
+		ret = qca807x_led_config(phydev);
+	#endif
 
 	return ret;
 }
